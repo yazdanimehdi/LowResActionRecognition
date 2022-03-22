@@ -1,7 +1,3 @@
-import torch
-
-from swin_transformer_model import SwinTransformer3D
-
 from data_prep_swin_functions import *
 from kinetics import build_dataloader, VideoDataset
 
@@ -48,24 +44,3 @@ data = dict(
 dataset = VideoDataset(**data['train'])
 
 data_loader = build_dataloader(dataset, **data['train_dataloader'])
-
-use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:0" if use_cuda else "cpu")
-
-model = SwinTransformer3D(patch_size=(2, 4, 4), drop_path_rate=0.2)
-# model.to(device)
-weights = torch.load('swin_base_patch244_window877_kinetics400_22k.pth')['state_dict']
-new_state_dict = {}
-for key in weights.keys():
-    string_new = ''
-    for item in key.split('.')[1:]:
-        string_new += item + '.'
-    string_new = string_new[:-1]
-    new_state_dict[string_new] = weights[key]
-
-model.load_state_dict(new_state_dict)
-model.to(device)
-
-for item in data_loader:
-    print(item['label'])
-    print(torch.argmax(model(torch.squeeze(item['imgs'], dim=0).to(device)).cpu()))

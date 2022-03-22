@@ -663,7 +663,8 @@ class SwinTransformer3D(nn.Module):
         x = rearrange(x, 'n d h w c -> n c d h w')
         x = self.avg_pool(x)
         x = F.dropout(x, 0.5)
-        return self.fc_cls(x)
+        x = x.view(-1, 1024)
+        return torch.softmax(self.fc_cls(x), dim=1)
 
     def train(self, mode=True):
         """Convert the model into training mode while keep layers freezed."""
