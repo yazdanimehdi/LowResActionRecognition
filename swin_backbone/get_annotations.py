@@ -1,14 +1,14 @@
 from os import walk
 
 f = []
-for (dirpath, dirnames2, filenames) in walk('val'):
+for (dirpath, dirnames2, filenames) in walk('../val'):
     f.extend(filenames)
     break
 dirnames2.sort()
-with open('annot.text', 'w') as fp:
+with open('../annot.txt', 'w') as fp:
     for item in dirnames2:
         f = []
-        for (dirpath, dirnames, filenames) in walk(f'val/{item}'):
+        for (dirpath, dirnames, filenames) in walk(f'../val/{item}'):
             f.extend(filenames)
             break
         for f in filenames:

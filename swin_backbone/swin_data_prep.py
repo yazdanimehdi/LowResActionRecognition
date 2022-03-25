@@ -22,7 +22,7 @@ transform = [
 ]
 dataset_type = 'VideoDataset'
 data_root = 'val/'
-ann_file_train = 'annot.text'
+ann_file_train = '../annot.text'
 
 data = dict(
     videos_per_gpu=1,
@@ -41,6 +41,4 @@ data = dict(
         pipeline=transform)
 )
 
-dataset = VideoDataset(**data['train'])
 
-data_loader = build_dataloader(dataset, **data['train_dataloader'])
