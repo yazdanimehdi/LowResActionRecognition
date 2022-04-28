@@ -99,9 +99,14 @@ class TinyVirat(Dataset):
         self.num_frames = num_frames
         self.skip_frames = skip_frames
         self.input_size = input_size
-        self.resize = Resize((self.input_size, self.input_size))
+        self.resize = transforms.Resize((self.input_size, self.input_size))
+        self.resize_crop = transforms.RandomResizedCrop((self.input_size, self.input_size))
+        self.flip_v = transforms.RandomVerticalFlip()
+        self.flip_h = transforms.RandomHorizontalFlip()
         self.normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.transform = transforms.Compose([ToFloatTensorInZeroOne(), self.resize, self.normalize])
+        self.transform = transforms.Compose(
+            [ToFloatTensorInZeroOne(), self.resize_crop, self.flip_v, self.flip_h, self.normalize])
+        self.transform_test = transforms.Compose([ToFloatTensorInZeroOne(), self.resize, self.normalize])
 
     def __len__(self):
         return len(self.video_ids)
@@ -167,7 +172,10 @@ class TinyVirat(Dataset):
         frames = self.load_all_frames(video_path)
         if len(frames) % self.num_frames != 0:
             frames = frames[:len(frames) - (len(frames) % self.num_frames)]
-        clips = torch.stack([self.transform(x) for x in chunks(frames, self.num_frames)])
+        if self.data_split == 'train':
+            clips = torch.stack([self.transform(x) for x in chunks(frames, self.num_frames)])
+        else:
+            clips = torch.stack([self.transform_test(x) for x in chunks(frames, self.num_frames)])
         return clips
 
     def __getitem__(self, index):
@@ -179,13 +187,8 @@ class TinyVirat(Dataset):
             video_labels = []
         else:
             video_labels = self.annotations[video_id]['label']
-        if self.data_split == 'train':
-            clips = self.build_consecutive_clips(video_path)
-        else:
-            clips = self.build_consecutive_clips(video_path)
 
-            if self.data_split == 'test':
-                return clips, [self.annotations[video_id]]
+        clips = self.build_consecutive_clips(video_path)
 
         label = np.zeros(self.num_classes)
         for _class in video_labels:
@@ -200,4 +203,7 @@ class TinyVirat(Dataset):
             clips = torch.cat((clips, rem_clips), dim=0)
         elif clips.shape[0] > NUM_CLIPS:
             clips = clips[:NUM_CLIPS, :, :, :, :]
-        return clips, label  # clips: nc x ch x t x H x W
+        if self.data_split == 'test':
+            return clips, [self.annotations[video_id]]
+        else:
+            return clips, label  # clips: nc x ch x t x H x W

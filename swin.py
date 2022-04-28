@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +9,6 @@ from timm.models.layers import DropPath, trunc_normal_
 from functools import reduce, lru_cache
 from operator import mul
 from einops import rearrange
-
 
 
 class Mlp(nn.Module):
@@ -37,7 +37,6 @@ def window_partition(x, window_size):
     Args:
         x: (B, D, H, W, C)
         window_size (tuple[int]): window size
-
     Returns:
         windows: (B*num_windows, window_size*window_size, C)
     """
@@ -55,7 +54,6 @@ def window_reverse(windows, window_size, B, D, H, W):
         window_size (tuple[int]): Window size
         H (int): Height of image
         W (int): Width of image
-
     Returns:
         x: (B, D, H, W, C)
     """
@@ -170,7 +168,6 @@ class WindowAttention3D(nn.Module):
 
 class SwinTransformerBlock3D(nn.Module):
     """ Swin Transformer Block.
-
     Args:
         dim (int): Number of input channels.
         num_heads (int): Number of attention heads.
@@ -252,7 +249,6 @@ class SwinTransformerBlock3D(nn.Module):
 
     def forward(self, x, mask_matrix):
         """ Forward function.
-
         Args:
             x: Input feature, tensor size (B, D, H, W, C).
             mask_matrix: Attention mask for cyclic shift.
@@ -275,7 +271,6 @@ class SwinTransformerBlock3D(nn.Module):
 
 class PatchMerging(nn.Module):
     """ Patch Merging Layer
-
     Args:
         dim (int): Number of input channels.
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
@@ -289,7 +284,6 @@ class PatchMerging(nn.Module):
 
     def forward(self, x):
         """ Forward function.
-
         Args:
             x: Input feature, tensor size (B, D, H, W, C).
         """
@@ -331,7 +325,6 @@ def compute_mask(D, H, W, window_size, shift_size, device):
 
 class BasicLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
-
     Args:
         dim (int): Number of feature channels
         depth (int): Depths of this stage.
@@ -391,7 +384,6 @@ class BasicLayer(nn.Module):
 
     def forward(self, x):
         """ Forward function.
-
         Args:
             x: Input feature, tensor size (B, C, D, H, W).
         """
@@ -415,7 +407,6 @@ class BasicLayer(nn.Module):
 
 class PatchEmbed3D(nn.Module):
     """ Video to Patch Embedding.
-
     Args:
         patch_size (int): Patch token size. Default: (2,4,4).
         in_chans (int): Number of input video channels. Default: 3.
@@ -423,7 +414,7 @@ class PatchEmbed3D(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, patch_size=(2, 4, 4), in_chans=3, embed_dim=128, norm_layer=None):
+    def __init__(self, patch_size=(2, 4, 4), in_chans=3, embed_dim=96, norm_layer=None):
         super().__init__()
         self.patch_size = patch_size
 
@@ -458,10 +449,9 @@ class PatchEmbed3D(nn.Module):
 
 
 class SwinTransformer3D(nn.Module):
-    """ Swin Transformer backbone.
+    """ Video Swin Transformer backbone.
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
-
     Args:
         patch_size (int | tuple(int)): Patch size. Default: (4,4,4).
         in_chans (int): Number of input image channels. Default: 3.
@@ -544,8 +534,10 @@ class SwinTransformer3D(nn.Module):
 
         # add a norm layer for each output
         self.norm = norm_layer(self.num_features)
-        self.fc_cls = nn.Linear(1024, 400)
-        self.avg_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
+
+        # Classification head - dummy layer to load weights - not used
+        self.fc_cls = nn.Linear(768, 400)
+
         self._freeze_stages()
 
     def _freeze_stages(self):
@@ -562,93 +554,6 @@ class SwinTransformer3D(nn.Module):
                 for param in m.parameters():
                     param.requires_grad = False
 
-    def inflate_weights(self, logger):
-        """Inflate the swin2d parameters to swin3d.
-
-        The differences between swin3d and swin2d mainly lie in an extra
-        axis. To utilize the pretrained parameters in 2d model,
-        the weight of swin2d models should be inflated to fit in the shapes of
-        the 3d counterpart.
-
-        Args:
-            logger (logging.Logger): The logger used to print
-                debugging infomation.
-        """
-        checkpoint = torch.load(self.pretrained, map_location='cpu')
-        state_dict = checkpoint['model']
-
-        # delete relative_position_index since we always re-init it
-        relative_position_index_keys = [k for k in state_dict.keys() if "relative_position_index" in k]
-        for k in relative_position_index_keys:
-            del state_dict[k]
-
-        # delete attn_mask since we always re-init it
-        attn_mask_keys = [k for k in state_dict.keys() if "attn_mask" in k]
-        for k in attn_mask_keys:
-            del state_dict[k]
-
-        state_dict['patch_embed.proj.weight'] = state_dict['patch_embed.proj.weight'].unsqueeze(2).repeat(1, 1,
-                                                                                                          self.patch_size[
-                                                                                                              0], 1,
-                                                                                                          1) / \
-                                                self.patch_size[0]
-
-        # bicubic interpolate relative_position_bias_table if not match
-        relative_position_bias_table_keys = [k for k in state_dict.keys() if "relative_position_bias_table" in k]
-        for k in relative_position_bias_table_keys:
-            relative_position_bias_table_pretrained = state_dict[k]
-            relative_position_bias_table_current = self.state_dict()[k]
-            L1, nH1 = relative_position_bias_table_pretrained.size()
-            L2, nH2 = relative_position_bias_table_current.size()
-            L2 = (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
-            wd = self.window_size[0]
-            if nH1 != nH2:
-                logger.warning(f"Error in loading {k}, passing")
-            else:
-                if L1 != L2:
-                    S1 = int(L1 ** 0.5)
-                    relative_position_bias_table_pretrained_resized = torch.nn.functional.interpolate(
-                        relative_position_bias_table_pretrained.permute(1, 0).view(1, nH1, S1, S1),
-                        size=(2 * self.window_size[1] - 1, 2 * self.window_size[2] - 1),
-                        mode='bicubic')
-                    relative_position_bias_table_pretrained = relative_position_bias_table_pretrained_resized.view(nH2,
-                                                                                                                   L2).permute(
-                        1, 0)
-            state_dict[k] = relative_position_bias_table_pretrained.repeat(2 * wd - 1, 1)
-
-        msg = self.load_state_dict(state_dict, strict=False)
-        logger.info(msg)
-        logger.info(f"=> loaded successfully '{self.pretrained}'")
-        del checkpoint
-        torch.cuda.empty_cache()
-
-    def init_weights(self, pretrained=None):
-        """Initialize the weights in backbone.
-
-        Args:
-            pretrained (str, optional): Path to pre-trained weights.
-                Defaults to None.
-        """
-
-        def _init_weights(m):
-            if isinstance(m, nn.Linear):
-                trunc_normal_(m.weight, std=.02)
-                if isinstance(m, nn.Linear) and m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.bias, 0)
-                nn.init.constant_(m.weight, 1.0)
-
-        if pretrained:
-            self.pretrained = pretrained
-        if isinstance(self.pretrained, str):
-            self.apply(_init_weights)
-
-        elif self.pretrained is None:
-            self.apply(_init_weights)
-        else:
-            raise TypeError('pretrained must be a str or None')
-
     def forward(self, x):
         """Forward function."""
         x = self.patch_embed(x)
@@ -657,12 +562,107 @@ class SwinTransformer3D(nn.Module):
 
         for layer in self.layers:
             x = layer(x.contiguous())
+
         x = rearrange(x, 'n c d h w -> n d h w c')
         x = self.norm(x)
         x = rearrange(x, 'n d h w c -> n c d h w')
+
         return x
 
     def train(self, mode=True):
         """Convert the model into training mode while keep layers freezed."""
         super(SwinTransformer3D, self).train(mode)
         self._freeze_stages()
+
+
+class SwinTransformer3D_head(nn.Module):
+    """Classification head for VideoSWIN.
+    Args:
+        num_classes (int): Number of classes to be classified.
+        in_channels (int): Number of channels in input feature.
+        loss_cls (dict): Config for building loss.
+            Default: dict(type='CrossEntropyLoss')
+        spatial_type (str): Pooling type in spatial dimension. Default: 'avg'.
+        dropout_ratio (float): Probability of dropout layer. Default: 0.5.
+        init_std (float): Std value for Initiation. Default: 0.01.
+        kwargs (dict, optional): Any keyword argument to be used to initialize
+    """
+
+    def __init__(self,
+                 num_classes=26,
+                 in_channels=1024,
+                 loss_cls=dict(type='BCEWithLogitsLoss'),
+                 spatial_type='avg',
+                 dropout_ratio=0.5,
+                 init_std=0.01,
+                 **kwargs):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.num_classes = num_classes
+        self.loss_cls = loss_cls
+        self.spatial_type = spatial_type
+        self.dropout_ratio = dropout_ratio
+        self.init_std = init_std
+        if self.dropout_ratio != 0:
+            self.dropout = nn.Dropout(p=self.dropout_ratio)
+        else:
+            self.dropout = None
+        self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
+
+        if self.spatial_type == 'avg':
+            # use `nn.AdaptiveAvgPool3d` to adaptively match the in_channels.
+            self.avg_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        else:
+            self.avg_pool = None
+
+    def forward(self, x):
+        """Defines the computation performed at every call.
+        Args:
+            x (torch.Tensor): The input data.
+        Returns:
+            torch.Tensor: The classification scores for input samples.
+        """
+        # [N, in_channels, 16, 56, 56]
+        if self.avg_pool is not None:
+            x = self.avg_pool(x)
+        # [N, in_channels, 1, 1, 1]
+        if self.dropout is not None:
+            x = self.dropout(x)
+        # [N, in_channels, 1, 1, 1]
+        x = x.view(x.shape[0], -1)
+        # [N, in_channels]
+        # cls_score = self.fc_cls(x)
+        # [N, num_classes]
+        return x
+
+
+class SWIN3D_Linhead(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(368640, 1024)
+        self.fc2 = nn.Linear(1024, 256)
+        self.fc3 = nn.Linear(256, 26)
+
+    def forward(self, x):
+        x = x.reshape(x.shape[0], -1)
+        x = self.fc1(x)
+        return x
+
+
+class VideoSWIN3D(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = SwinTransformer3D()
+        self.head = SwinTransformer3D_head()  # SWIN3D_Linhead()
+
+        # Load weights into backbone
+        # PATH = '/home/mo926312/Documents/modelZoo/swin_tiny_patch244_window877_kinetics400_1k.pth'
+        # weights = torch.load(PATH)['state_dict']
+        new_state_dict = {}
+
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.head(x)
+        return x

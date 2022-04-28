@@ -1,3 +1,4 @@
+
 from functools import partial
 from einops import rearrange, repeat
 import numpy as np
@@ -5,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .model_utils import Block
-
+from resnet import generate_model
 '''
 H =img height
 W = img width
@@ -21,7 +22,7 @@ nb = T/tt #number of blocks or tubelets with unique temporal index
 
 class ViViT_FE(nn.Module):
     def __init__(self, spatial_embed_dim=1024, sdepth=4, tdepth=4, vid_dim=(128, 128, 100),
-                 num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None, spat_op='cls', tubelet_dim=(3, 4, 4, 4),
+                 num_heads=16, mlp_ratio=2., qkv_bias=True, qk_scale=None, spat_op='cls', tubelet_dim=(3, 4, 4, 4),
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=None, num_classes=26):
         """    ##########hybrid_backbone=None, representation_size=None,
         Args:
@@ -53,11 +54,8 @@ class ViViT_FE(nn.Module):
         print("Tubelet dim: ", tubelet_dim)
 
         c, tt, th, tw = tubelet_dim
-        self.tubelet_dim = tubelet_dim
 
-        ### spatial patch embedding
-        self.Spatial_patch_to_embedding = nn.Conv3d(c, spatial_embed_dim, self.tubelet_dim[1:],
-                                                    stride=self.tubelet_dim[1:], padding='valid', dilation=1)
+        self.Spatial_patch_to_embedding = generate_model(1)
         num_spat_tokens = (vid_dim[0] // th) * (vid_dim[1] // tw)
         self.Spatial_pos_embed = nn.Parameter(
             torch.zeros(1, num_spat_tokens + 1, spatial_embed_dim))  # num joints + 1 for cls token
@@ -172,20 +170,12 @@ class MLPClassifier(nn.Module):
         hidden_features = 4096
         self.fc1 = nn.Linear(1024, hidden_features)
         self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden_features, 1024)
-        self.fc3 = nn.Linear(1024, 512)
-        self.fc4 = nn.Linear(512, out_features)
+        self.fc2 = nn.Linear(hidden_features, out_features)
 
     def forward(self, x, training=True):
         x = self.fc1(x)
         x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
+        x = F.dropout(x, training=training, p=0.2)
         x = self.fc2(x)
-        x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
-        x = self.fc3(x)
-        x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
-        x = self.fc4(x)
         # x = self.drop(x)
         return x

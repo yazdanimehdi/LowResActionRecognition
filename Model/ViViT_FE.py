@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .model_utils import Block
+from vivit_model.model_utils import Block
 
 '''
 H =img height
@@ -20,7 +20,7 @@ nb = T/tt #number of blocks or tubelets with unique temporal index
 
 
 class ViViT_FE(nn.Module):
-    def __init__(self, spatial_embed_dim=1024, sdepth=4, tdepth=4, vid_dim=(128, 128, 100),
+    def __init__(self, spatial_embed_dim=32, sdepth=4, tdepth=4, vid_dim=(128, 128, 100),
                  num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None, spat_op='cls', tubelet_dim=(3, 4, 4, 4),
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=None, num_classes=26):
         """    ##########hybrid_backbone=None, representation_size=None,
@@ -138,7 +138,6 @@ class ViViT_FE(nn.Module):
         b = x.shape[0]
         class_token = torch.tile(self.temporal_cls_token, (b, 1, 1))  # (B,1,temp_embed_dim)
         x = torch.cat((x, class_token), dim=1)  # (B,F+1,temp_embed_dim)
-
         x += self.Temporal_pos_embed
 
         x = self.pos_drop(x)
@@ -161,31 +160,5 @@ class ViViT_FE(nn.Module):
         # Reshape input to pass through Conv3D patch embedding
         x = self.Spatial_forward_features(x, self.spat_op)  # b x nc x Se
         x = self.Temporal_forward_features(x)
-
-        return x
-
-
-class MLPClassifier(nn.Module):
-    def __init__(self):
-        super(MLPClassifier, self).__init__()
-        out_features = 26
-        hidden_features = 4096
-        self.fc1 = nn.Linear(1024, hidden_features)
-        self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden_features, 1024)
-        self.fc3 = nn.Linear(1024, 512)
-        self.fc4 = nn.Linear(512, out_features)
-
-    def forward(self, x, training=True):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
-        x = self.fc2(x)
-        x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
-        x = self.fc3(x)
-        x = self.act(x)
-        x = F.dropout(x, training=training, p=0.3)
-        x = self.fc4(x)
-        # x = self.drop(x)
-        return x
+        x = self.class_head(x)
+        return x  # F.log_softmax(x,dim=1)
